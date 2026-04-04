@@ -193,6 +193,25 @@ class WebViewContainer: NSView {
         }
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command) {
+            let selector: Selector? = {
+                switch event.charactersIgnoringModifiers?.lowercased() {
+                case "v": return NSSelectorFromString("paste:")
+                case "c": return NSSelectorFromString("copy:")
+                case "x": return NSSelectorFromString("cut:")
+                case "a": return NSSelectorFromString("selectAll:")
+                default: return nil
+                }
+            }()
+            if let selector = selector, webView.responds(to: selector) {
+                webView.perform(selector, with: nil)
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func layout() {
         super.layout()
         if webView.superview === self {
