@@ -2,6 +2,8 @@
 
 An **unofficial macOS desktop app** for Google Gemini, built as a lightweight native wrapper.
 
+Modified based on project [alexcding/gemini-desktop-mac](https://github.com/alexcding/gemini-desktop-mac).
+
 > **Disclaimer:**
 > This project is **not affiliated with, endorsed by, or sponsored by Google**.
 > "Gemini" is a trademark of **Google LLC**.
