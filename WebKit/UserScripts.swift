@@ -17,7 +17,8 @@ enum UserScripts {
     static func createAllScripts() -> [WKUserScript] {
         var scripts: [WKUserScript] = [
             createIMEFixScript(),
-            createTooltipFixScript()
+            createTooltipFixScript(),
+            createCursorFixScript()
         ]
 
         #if DEBUG
@@ -51,6 +52,17 @@ enum UserScripts {
     private static func createTooltipFixScript() -> WKUserScript {
         WKUserScript(
             source: tooltipFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that repositions Google's custom caret (.CEpIFc) on cursor movement.
+    /// Google's custom caret has a color-changing animation but doesn't update position on arrow keys in WebKit.
+    /// This script uses a mirror div to measure cursor position and repositions the caret element.
+    private static func createCursorFixScript() -> WKUserScript {
+        WKUserScript(
+            source: cursorFixSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -156,13 +168,136 @@ enum UserScripts {
                 transform: translateY(-50%) translateX(-4px) !important;
             }
             .ITIRGe {
-                caret-color: auto !important;
+                caret-color: transparent !important;
             }
             .CEpIFc {
                 display: none !important;
             }
         `;
         document.head.appendChild(style);
+    })();
+    """
+
+    /// JavaScript to render a custom blue caret for the textarea.
+    /// Hides the native thin caret and Google's broken custom caret,
+    /// draws our own 2px blue bar that tracks cursor position.
+    private static let cursorFixSource = """
+    (function() {
+        'use strict';
+
+        var caretEl = null;
+        var lastFocused = null;
+        var rafPending = false;
+
+        function ensureCaret() {
+            if (caretEl) return;
+            caretEl = document.createElement('div');
+            caretEl.style.cssText =
+                'position:fixed;width:2px;background:#4285f4;' +
+                'pointer-events:none;z-index:10000;display:none;border-radius:1px';
+
+            caretEl.style.background = '#4285f4';
+
+            var style = document.createElement('style');
+            style.textContent = '@keyframes _gc_blink{0%,100%{opacity:1}50%{opacity:0}}';
+            document.head.appendChild(style);
+            caretEl.style.animation = '_gc_blink 1.06s step-end infinite';
+
+            var colors = ['#4285f4', '#ea4335', '#fbbc04', '#34a853'];
+            var colorIdx = 0;
+            setInterval(function() {
+                colorIdx = (colorIdx + 1) % colors.length;
+                if (caretEl) caretEl.style.background = colors[colorIdx];
+            }, 1060);
+
+            document.body.appendChild(caretEl);
+        }
+
+        function measureCursor(textarea) {
+            var cs = getComputedStyle(textarea);
+            var mirror = document.createElement('div');
+
+            mirror.style.cssText =
+                'position:absolute;visibility:hidden;white-space:pre-wrap;' +
+                'word-wrap:break-word;overflow:hidden;' +
+                'width:' + textarea.clientWidth + 'px;' +
+                'font:' + cs.font + ';' +
+                'line-height:' + cs.lineHeight + ';' +
+                'letter-spacing:' + cs.letterSpacing + ';' +
+                'padding-top:' + cs.paddingTop + ';' +
+                'padding-right:' + cs.paddingRight + ';' +
+                'padding-bottom:' + cs.paddingBottom + ';' +
+                'padding-left:' + cs.paddingLeft + ';' +
+                'border-top:' + cs.borderTop + ';' +
+                'border-right:' + cs.borderRight + ';' +
+                'border-bottom:' + cs.borderBottom + ';' +
+                'border-left:' + cs.borderLeft + ';' +
+                'box-sizing:' + cs.boxSizing;
+
+            var pos = textarea.selectionStart;
+            var text = textarea.value;
+            mirror.textContent = text.substring(0, pos);
+
+            var marker = document.createElement('span');
+            marker.textContent = '\\u200b';
+            mirror.appendChild(marker);
+            mirror.appendChild(document.createTextNode(text.substring(pos)));
+
+            document.body.appendChild(mirror);
+            var mRect = mirror.getBoundingClientRect();
+            var kRect = marker.getBoundingClientRect();
+            document.body.removeChild(mirror);
+
+            return {
+                x: kRect.left - mRect.left - textarea.scrollLeft,
+                y: kRect.top - mRect.top - textarea.scrollTop,
+                h: kRect.height || parseFloat(cs.lineHeight) || 20
+            };
+        }
+
+        function updateCaret() {
+            if (!lastFocused || !caretEl) return;
+            var rect = lastFocused.getBoundingClientRect();
+            var c = measureCursor(lastFocused);
+            caretEl.style.left = (rect.left + c.x) + 'px';
+            caretEl.style.top = (rect.top + c.y) + 'px';
+            caretEl.style.height = c.h + 'px';
+            caretEl.style.display = 'block';
+        }
+
+        function scheduleUpdate() {
+            if (rafPending) return;
+            rafPending = true;
+            requestAnimationFrame(function() {
+                rafPending = false;
+                updateCaret();
+            });
+        }
+
+        function hideCaret() {
+            if (caretEl) caretEl.style.display = 'none';
+            lastFocused = null;
+        }
+
+        document.addEventListener('focus', function(e) {
+            if (e.target && e.target.classList && e.target.classList.contains('ITIRGe')) {
+                lastFocused = e.target;
+                ensureCaret();
+                scheduleUpdate();
+            }
+        }, true);
+
+        document.addEventListener('blur', function(e) {
+            if (e.target === lastFocused) hideCaret();
+        }, true);
+
+        document.addEventListener('selectionchange', function() {
+            if (lastFocused) scheduleUpdate();
+        });
+
+        document.addEventListener('scroll', function(e) {
+            if (e.target === lastFocused) scheduleUpdate();
+        }, true);
     })();
     """
 
