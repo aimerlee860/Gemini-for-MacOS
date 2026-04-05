@@ -16,7 +16,8 @@ enum UserScripts {
     /// Creates all user scripts to be injected into the WebView
     static func createAllScripts() -> [WKUserScript] {
         var scripts: [WKUserScript] = [
-            createIMEFixScript()
+            createIMEFixScript(),
+            createTooltipFixScript()
         ]
 
         #if DEBUG
@@ -40,6 +41,16 @@ enum UserScripts {
     private static func createIMEFixScript() -> WKUserScript {
         WKUserScript(
             source: imeFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that fixes tooltip positioning issues in WebKit
+    /// Google's tooltips use `offset-distance` and positioning that may not work correctly in older WebKit
+    private static func createTooltipFixScript() -> WKUserScript {
+        WKUserScript(
+            source: tooltipFixSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -115,4 +126,44 @@ enum UserScripts {
         }, true);
     })();
     """
+
+    /// CSS to fix tooltip positioning issues in WebKit
+    /// - `offset-distance` may not be supported, causing tooltips to render at wrong positions
+    /// - WebKit may calculate `position: absolute` differently within `inline-flex` containers
+    /// - `transform-origin` defaults may differ between engines
+    private static let tooltipFixSource = """
+    (function() {
+        const style = document.createElement('style');
+        style.textContent = `
+            .LGKDTe {
+                offset-distance: unset !important;
+                top: 50% !important;
+                left: 100% !important;
+                transform: translateY(-50%) translateX(8px) scale(1) !important;
+                transform-origin: left center !important;
+            }
+            .LGKDTe.BQmez {
+                transform: translateY(-50%) translateX(8px) scale(0.8) !important;
+                opacity: 0 !important;
+            }
+            .LGKDTe.ko8QQ {
+                transform: translateY(-50%) translateX(8px) scale(1) !important;
+                opacity: 1 !important;
+            }
+            .LcPLZc {
+                top: 50% !important;
+                left: 0 !important;
+                transform: translateY(-50%) translateX(-4px) !important;
+            }
+            .ITIRGe {
+                caret-color: auto !important;
+            }
+            .CEpIFc {
+                display: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+    })();
+    """
+
 }
