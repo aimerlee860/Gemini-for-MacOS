@@ -14,6 +14,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("[GeminiDesktop] applicationDidFinishLaunching called")
 
+        setupMenu()
+
         // Main window
         let mainWindowView = MainWindowView(coordinator: coordinator)
         let hostingView = NSHostingView(rootView: mainWindowView)
@@ -53,6 +55,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         NotificationCenter.default.post(name: .openMainWindow, object: nil)
         return true
+    }
+
+    // MARK: - Menu
+
+    private func setupMenu() {
+        let mainMenu = NSMenu()
+
+        // App menu ("Gemini")
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu(title: "Gemini")
+        appMenu.addItem(withTitle: "About Gemini", action: #selector(showAboutPanel), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Quit Gemini", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @objc private func showAboutPanel() {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        NSApp.orderFrontStandardAboutPanel(options: [
+            .applicationName: "Gemini",
+            .applicationVersion: "Version \(version)"
+        ])
     }
 
     // MARK: - Windows
