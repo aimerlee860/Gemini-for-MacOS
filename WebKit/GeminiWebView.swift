@@ -133,14 +133,14 @@ struct GeminiWebView: NSViewRepresentable {
             }
         }
 
+        private static let internalHosts: Set<String> = ["www.google.com", "gemini.google.com", "accounts.google.com"]
+        private static let internalSuffixes = [".googleapis.com", ".gstatic.com"]
+
         private func isExternalURL(_ url: URL) -> Bool {
             guard let host = url.host?.lowercased() else { return false }
-            // Only Gemini-related domains stay in the app
-            let internalHosts = ["www.google.com", "gemini.google.com", "accounts.google.com"]
-            let internalSuffixes = [".googleapis.com", ".gstatic.com"]
 
-            if internalHosts.contains(host) { return false }
-            for suffix in internalSuffixes {
+            if Self.internalHosts.contains(host) { return false }
+            for suffix in Self.internalSuffixes {
                 if host.hasSuffix(suffix) { return false }
             }
             return true
@@ -195,15 +195,15 @@ class WebViewContainer: NSView {
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.contains(.command) {
-            let selector: Selector? = {
-                switch event.charactersIgnoringModifiers?.lowercased() {
-                case "v": return NSSelectorFromString("paste:")
-                case "c": return NSSelectorFromString("copy:")
-                case "x": return NSSelectorFromString("cut:")
-                case "a": return NSSelectorFromString("selectAll:")
-                default: return nil
-                }
-            }()
+            let char = event.charactersIgnoringModifiers?.lowercased()
+            let selector: Selector?
+            switch char {
+            case "v": selector = NSSelectorFromString("paste:")
+            case "c": selector = NSSelectorFromString("copy:")
+            case "x": selector = NSSelectorFromString("cut:")
+            case "a": selector = NSSelectorFromString("selectAll:")
+            default: selector = nil
+            }
             if let selector = selector, webView.responds(to: selector) {
                 webView.perform(selector, with: nil)
                 return true

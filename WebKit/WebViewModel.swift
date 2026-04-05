@@ -122,40 +122,32 @@ class WebViewModel: ObservableObject {
 
     private func setupObservers() {
         backObserver = wkWebView.observe(\.canGoBack, options: [.new, .initial]) { [weak self] webView, _ in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.canGoBack = !self.isAtHome && webView.canGoBack
-            }
+            guard let self = self else { return }
+            self.canGoBack = !self.isAtHome && webView.canGoBack
         }
 
         forwardObserver = wkWebView.observe(\.canGoForward, options: [.new, .initial]) { [weak self] webView, _ in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                self.canGoForward = webView.canGoForward
-            }
+            guard let self = self else { return }
+            self.canGoForward = webView.canGoForward
         }
 
         loadingObserver = wkWebView.observe(\.isLoading, options: [.new, .initial]) { [weak self] webView, _ in
-            DispatchQueue.main.async {
-                self?.isLoading = webView.isLoading
-            }
+            self?.isLoading = webView.isLoading
         }
 
         urlObserver = wkWebView.observe(\.url, options: .new) { [weak self] webView, _ in
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                guard let currentURL = webView.url else { return }
+            guard let self = self else { return }
+            guard let currentURL = webView.url else { return }
 
-                let isGeminiApp = currentURL.host == Self.geminiHost &&
-                                  currentURL.path.hasPrefix(Self.geminiAppPath)
+            let isGeminiApp = currentURL.host == Self.geminiHost &&
+                              currentURL.path.hasPrefix(Self.geminiAppPath)
 
-                if isGeminiApp {
-                    self.isAtHome = true
-                    self.canGoBack = false
-                } else {
-                    self.isAtHome = false
-                    self.canGoBack = webView.canGoBack
-                }
+            if isGeminiApp {
+                self.isAtHome = true
+                self.canGoBack = false
+            } else {
+                self.isAtHome = false
+                self.canGoBack = webView.canGoBack
             }
         }
     }
