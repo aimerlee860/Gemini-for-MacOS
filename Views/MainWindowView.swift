@@ -15,12 +15,14 @@ struct MainWindowView: View {
     var body: some View {
         ZStack {
             GeminiWebView(webView: coordinator.webViewModel.wkWebView)
+                .ignoresSafeArea()
 
             if isLoading {
                 ProgressView()
                     .scaleEffect(1.0)
             }
         }
+        .ignoresSafeArea()
         .onReceive(coordinator.webViewModel.$isLoading) { loading in
             isLoading = loading
         }

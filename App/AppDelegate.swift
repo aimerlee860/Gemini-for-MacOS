@@ -26,14 +26,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: false
         )
         mainWindow.title = AppCoordinator.Constants.mainWindowTitle
-        // mainWindow.titlebarAppearsTransparent = true
+        mainWindow.backgroundColor = .white
+        mainWindow.titlebarAppearsTransparent = true
         mainWindow.styleMask.insert(.fullSizeContentView)
         mainWindow.titleVisibility = .hidden
         if #available(macOS 11.0, *) {
             mainWindow.titlebarSeparatorStyle = .none
         }
         mainWindow.contentView = hostingView
-        mainWindow.minSize = NSSize(width: 1250, height: 750)
+        mainWindow.minSize = NSSize(width: 1280, height: 800)
         mainWindow.delegate = self
         mainWindow.center()
         mainWindow.setFrameAutosaveName("MainWindow")

@@ -116,6 +116,9 @@ class WebViewModel: ObservableObject {
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsLinkPreview = true
         webView.customUserAgent = userAgent
+        if #available(macOS 12.0, *) {
+            webView.underPageBackgroundColor = .white
+        }
 
         return webView
     }
