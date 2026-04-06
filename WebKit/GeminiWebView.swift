@@ -152,6 +152,7 @@ class WebViewContainer: NSView {
     let webView: WKWebView
     let coordinator: GeminiWebView.Coordinator
     private var windowObserver: NSObjectProtocol?
+    private let titlebarDragView = TitlebarDragView()
 
     init(webView: WKWebView, coordinator: GeminiWebView.Coordinator) {
         self.webView = webView
@@ -217,6 +218,21 @@ class WebViewContainer: NSView {
         if webView.superview === self {
             webView.frame = bounds
         }
+        let titlebarHeight: CGFloat = 28
+        titlebarDragView.frame = NSRect(
+            x: 0,
+            y: bounds.height - titlebarHeight,
+            width: bounds.width,
+            height: titlebarHeight
+        )
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let titlebarHeight: CGFloat = 28
+        if point.y >= bounds.height - titlebarHeight {
+            return titlebarDragView
+        }
+        return super.hitTest(point)
     }
 
     private func attachWebView() {
@@ -227,6 +243,47 @@ class WebViewContainer: NSView {
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
         addSubview(webView)
+        // 确保 titlebarDragView 在最上层
+        titlebarDragView.removeFromSuperview()
+        addSubview(titlebarDragView)
+    }
+}
+
+private final class TitlebarDragView: NSView {
+    override func mouseDown(with event: NSEvent) {
+        guard let window = window else { return }
+
+        // 双击标题栏：最大化/还原
+        if event.clickCount == 2 {
+            window.zoom(nil)
+            return
+        }
+
+        let startMouse = NSEvent.mouseLocation
+        let startOrigin = window.frame.origin
+
+        var shouldStop = false
+        while !shouldStop {
+            guard let dragEvent = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: Date.distantFuture,
+                inMode: .eventTracking,
+                dequeue: true
+            ) else { break }
+
+            switch dragEvent.type {
+            case .leftMouseDragged:
+                let current = NSEvent.mouseLocation
+                window.setFrameOrigin(NSPoint(
+                    x: startOrigin.x + current.x - startMouse.x,
+                    y: startOrigin.y + current.y - startMouse.y
+                ))
+            case .leftMouseUp:
+                shouldStop = true
+            default:
+                break
+            }
+        }
     }
 }
 
