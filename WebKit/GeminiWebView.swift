@@ -23,7 +23,7 @@ struct GeminiWebView: NSViewRepresentable {
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
-        private var downloadDestination: URL?
+        private var downloadDestinations: [ObjectIdentifier: URL] = [:]
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
@@ -70,16 +70,18 @@ struct GeminiWebView: NSViewRepresentable {
                 counter += 1
             }
 
-            downloadDestination = destination
+            downloadDestinations[ObjectIdentifier(download)] = destination
             completionHandler(destination)
         }
 
         func downloadDidFinish(_ download: WKDownload) {
-            guard let destination = downloadDestination else { return }
+            let key = ObjectIdentifier(download)
+            guard let destination = downloadDestinations.removeValue(forKey: key) else { return }
             NSWorkspace.shared.activateFileViewerSelecting([destination])
         }
 
         func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+            downloadDestinations.removeValue(forKey: ObjectIdentifier(download))
             let alert = NSAlert()
             alert.messageText = "Download Failed"
             alert.informativeText = error.localizedDescription
@@ -167,6 +169,9 @@ class WebViewContainer: NSView {
     }
 
     deinit {
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
+        webView.removeFromSuperview()
         if let observer = windowObserver {
             NotificationCenter.default.removeObserver(observer)
         }

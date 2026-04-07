@@ -202,6 +202,7 @@ enum UserScripts {
         var caretEl = null;
         var lastFocused = null;
         var rafPending = false;
+        var colorTimer = null;
 
         function ensureCaret() {
             if (caretEl) return;
@@ -219,13 +220,20 @@ enum UserScripts {
 
             var colors = ['#4285f4', '#ea4335', '#fbbc04', '#34a853'];
             var colorIdx = 0;
-            setInterval(function() {
+            colorTimer = setInterval(function() {
                 colorIdx = (colorIdx + 1) % colors.length;
                 if (caretEl) caretEl.style.background = colors[colorIdx];
             }, 1060);
 
             document.body.appendChild(caretEl);
         }
+
+        // 暴露清理函数，供 native 端在 cleanup 时调用
+        window._geminiCursorCleanup = function() {
+            if (colorTimer) { clearInterval(colorTimer); colorTimer = null; }
+            if (caretEl) { caretEl.remove(); caretEl = null; }
+            lastFocused = null;
+        };
 
         function measureCursor(textarea) {
             var cs = getComputedStyle(textarea);

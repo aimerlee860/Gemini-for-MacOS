@@ -42,6 +42,7 @@ class WebViewModel: ObservableObject {
     private var urlObserver: NSKeyValueObservation?
     private var loadingObserver: NSKeyValueObservation?
     private let consoleLogHandler = ConsoleLogHandler()
+    private var isCleanedUp = false
 
     // MARK: - Initialization
 
@@ -49,6 +50,10 @@ class WebViewModel: ObservableObject {
         self.wkWebView = Self.createWebView(consoleLogHandler: consoleLogHandler)
         setupObservers()
         loadHome()
+    }
+
+    deinit {
+        cleanup()
     }
 
     // MARK: - Language
@@ -166,5 +171,34 @@ class WebViewModel: ObservableObject {
                 self.canGoBack = webView.canGoBack
             }
         }
+    }
+
+    // MARK: - Cleanup
+
+    func cleanup() {
+        guard !isCleanedUp else { return }
+        isCleanedUp = true
+
+        // 通知 JS 清理定时器和 DOM 元素
+        wkWebView.evaluateJavaScript("if(window._geminiCursorCleanup)window._geminiCursorCleanup();", completionHandler: nil)
+
+        // 停止所有加载，中断媒体流
+        wkWebView.stopLoading()
+        // 清空页面内容，释放 GPU/解码资源
+        wkWebView.loadHTMLString("", baseURL: nil)
+        // 移除导航和 UI 代理，防止回调到已释放的对象
+        wkWebView.navigationDelegate = nil
+        wkWebView.uiDelegate = nil
+
+        // 移除 console log handler（防止 WKUserContentController 强持有）
+        #if DEBUG
+        wkWebView.configuration.userContentController.removeScriptMessageHandler(forName: UserScripts.consoleLogHandler)
+        #endif
+
+        // 清理 KVO observers — 每步独立执行，避免中途异常跳过后续步骤
+        backObserver?.invalidate(); backObserver = nil
+        forwardObserver?.invalidate(); forwardObserver = nil
+        urlObserver?.invalidate(); urlObserver = nil
+        loadingObserver?.invalidate(); loadingObserver = nil
     }
 }

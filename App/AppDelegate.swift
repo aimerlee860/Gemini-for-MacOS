@@ -120,6 +120,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Windows
 
+    func applicationWillTerminate(_ notification: Notification) {
+        coordinator.webViewModel.cleanup()
+        NotificationCenter.default.removeObserver(self)
+    }
+
     func openMainWindow() {
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
