@@ -8,7 +8,7 @@ import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var coordinator = AppCoordinator()
-    var mainWindow: NSWindow!
+    var mainWindow: NSWindow?
     var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -19,29 +19,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Main window
         let mainWindowView = MainWindowView(coordinator: coordinator)
         let hostingView = NSHostingView(rootView: mainWindowView)
-        mainWindow = NSWindow(
+        let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        mainWindow.title = AppCoordinator.Constants.mainWindowTitle
-        mainWindow.backgroundColor = .white
-        mainWindow.titlebarAppearsTransparent = true
-        mainWindow.styleMask.insert(.fullSizeContentView)
-        mainWindow.titleVisibility = .hidden
+        window.title = AppCoordinator.Constants.mainWindowTitle
+        window.backgroundColor = .white
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.titleVisibility = .hidden
         if #available(macOS 11.0, *) {
-            mainWindow.titlebarSeparatorStyle = .none
+            window.titlebarSeparatorStyle = .none
         }
-        mainWindow.contentView = hostingView
-        mainWindow.minSize = NSSize(width: 1280, height: 800)
-        mainWindow.delegate = self
-        mainWindow.center()
-        mainWindow.setFrameAutosaveName("MainWindow")
-        NSLog("[GeminiDesktop] Window created, frame: \(mainWindow.frame)")
-
-        mainWindow.makeKeyAndOrderFront(nil)
-        NSLog("[GeminiDesktop] Window visible: \(mainWindow.isVisible)")
+        window.contentView = hostingView
+        window.minSize = NSSize(width: 1280, height: 800)
+        window.delegate = self
+        window.center()
+        window.setFrameAutosaveName("MainWindow")
+        NSLog("[GeminiDesktop] Window created, frame: \(window.frame)")
+        window.makeKeyAndOrderFront(nil)
+        NSLog("[GeminiDesktop] Window visible: \(window.isVisible)")
+        mainWindow = window
 
         // Observe open main window notification
         NotificationCenter.default.addObserver(
@@ -86,7 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Windows
 
     func openMainWindow() {
-        mainWindow.makeKeyAndOrderFront(nil)
+        mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -128,8 +128,17 @@ extension AppDelegate: NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if let window = notification.object as? NSWindow, window == settingsWindow {
+        guard let window = notification.object as? NSWindow else { return }
+        if window == settingsWindow {
             settingsWindow = nil
         }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender == mainWindow {
+            NSApp.terminate(nil)
+            return false
+        }
+        return true
     }
 }
