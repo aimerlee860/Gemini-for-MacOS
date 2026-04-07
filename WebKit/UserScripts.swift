@@ -21,6 +21,10 @@ enum UserScripts {
             createCursorFixScript()
         ]
 
+        if AppLanguage.current == .chinese {
+            scripts.append(createLanguageHintScript())
+        }
+
         #if DEBUG
         scripts.insert(createConsoleLogBridgeScript(), at: 0)
         #endif
@@ -63,6 +67,16 @@ enum UserScripts {
     private static func createCursorFixScript() -> WKUserScript {
         WKUserScript(
             source: cursorFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that prepends a language hint to user messages
+    /// to ensure Gemini always responds in Chinese
+    private static func createLanguageHintScript() -> WKUserScript {
+        WKUserScript(
+            source: languageHintSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -297,6 +311,65 @@ enum UserScripts {
 
         document.addEventListener('scroll', function(e) {
             if (e.target === lastFocused) scheduleUpdate();
+        }, true);
+    })();
+    """
+
+    /// Language hint prefix prepended to every user message
+    private static let languageHintPrefix = "请始终使用中文回复。"
+
+    /// JavaScript to prepend a language hint to user messages in the Gemini web interface.
+    /// Intercepts the Enter key (outside IME composition) and modifies the textarea content
+    /// to include a language instruction before the message is sent.
+    private static let languageHintSource = """
+    (function() {
+        'use strict';
+
+        var LANG_PREFIX = '\(languageHintPrefix)';
+
+        function isTextarea(el) {
+            return el && el.classList && el.classList.contains('ITIRGe');
+        }
+
+        function prependLanguageHint(textarea) {
+            var text = textarea.value.trim();
+            if (!text) return;
+            if (text.indexOf(LANG_PREFIX) === 0) return;
+
+            var newValue = LANG_PREFIX + '\\n' + text;
+
+            // Use nativeInputValueSetter to bypass React's controlled input
+            var nativeSet = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            ).set;
+            nativeSet.call(textarea, newValue);
+
+            // Dispatch events so React/web framework picks up the change
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        // Track IME state to avoid interfering with IME composition
+        var imeActive = false;
+        document.addEventListener('compositionstart', function() { imeActive = true; }, true);
+        document.addEventListener('compositionend', function() { imeActive = false; }, true);
+
+        // Intercept Enter key to prepend language hint before send
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'Enter') return;
+            if (e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+            if (imeActive || e.isComposing || e.keyCode === 229) return;
+
+            var textarea = e.target;
+            if (!isTextarea(textarea)) return;
+
+            // Delay to let IME fix script process first, then modify content
+            var captured = textarea;
+            setTimeout(function() {
+                if (captured.value.trim()) {
+                    prependLanguageHint(captured);
+                }
+            }, 10);
         }, true);
     })();
     """

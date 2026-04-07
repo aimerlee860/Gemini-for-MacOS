@@ -22,8 +22,7 @@ class WebViewModel: ObservableObject {
 
     // MARK: - Constants
 
-    static let geminiURL = URL(string: "https://www.google.com/search?udm=50")!
-
+    private static let geminiBaseURL = "https://www.google.com/search?udm=50"
     private static let geminiHost = "www.google.com"
     private static let geminiAppPath = "/search"
     private static let userAgent: String = UserAgent.safari
@@ -52,12 +51,26 @@ class WebViewModel: ObservableObject {
         loadHome()
     }
 
+    // MARK: - Language
+
+    static func geminiURL(for language: AppLanguage) -> URL {
+        let urlString: String
+        switch language {
+        case .chinese:
+            urlString = geminiBaseURL + "&hl=zh-CN"
+        case .english:
+            urlString = geminiBaseURL
+        }
+        return URL(string: urlString)!
+    }
+
     // MARK: - Navigation
 
     func loadHome() {
         isAtHome = true
         canGoBack = false
-        wkWebView.load(URLRequest(url: Self.geminiURL))
+        let url = Self.geminiURL(for: AppLanguage.current)
+        wkWebView.load(URLRequest(url: url))
     }
 
     func goBack() {

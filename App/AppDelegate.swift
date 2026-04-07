@@ -68,11 +68,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu(title: "Gemini")
         appMenu.addItem(withTitle: "About Gemini", action: #selector(showAboutPanel), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
+        // Language submenu inside Gemini menu
+        let langMenuItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        let langMenu = NSMenu(title: "Language")
+        for language in AppLanguage.allCases {
+            let item = langMenu.addItem(
+                withTitle: language.displayName,
+                action: #selector(switchLanguage(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = language.rawValue
+            if language == AppLanguage.current {
+                item.state = .on
+            }
+        }
+        langMenuItem.submenu = langMenu
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(langMenuItem)
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Gemini", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @objc private func switchLanguage(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let language = AppLanguage(rawValue: rawValue) else { return }
+
+        AppLanguage.current = language
+
+        // Update menu item check marks
+        if let langMenu = sender.menu {
+            for item in langMenu.items {
+                item.state = (item.representedObject as? String == rawValue) ? .on : .off
+            }
+        }
+
+        // Reload page with new language URL
+        coordinator.webViewModel.loadHome()
     }
 
     @objc private func showAboutPanel() {
