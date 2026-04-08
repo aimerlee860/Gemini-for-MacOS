@@ -182,7 +182,9 @@ class WebViewModel: ObservableObject {
         // 通知 JS 清理定时器和 DOM 元素
         wkWebView.evaluateJavaScript("if(window._geminiCursorCleanup)window._geminiCursorCleanup();", completionHandler: nil)
 
-        // 停止所有加载，中断媒体流
+        // 停止所有媒体渲染管线
+        wkWebView.pauseAllMediaPlayback()
+        // 停止所有加载，中断网络请求
         wkWebView.stopLoading()
         // 清空页面内容，释放 GPU/解码资源
         wkWebView.loadHTMLString("", baseURL: nil)
