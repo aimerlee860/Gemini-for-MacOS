@@ -465,44 +465,78 @@ enum UserScripts {
     private static let languageHintPrefix = "请始终使用中文回复。"
 
     /// JavaScript to fix broken copy toast notifications in WebKit.
-    /// Uses MutationObserver to detect toast-like elements that appear after copying code,
-    /// and hides them before they render as broken black areas.
+    /// Hides Google's native broken toast (renders as black area in old WebKit),
+    /// and replaces the copy button icon with a checkmark on click.
     private static let copyToastFixSource = """
     (function() {
         'use strict';
 
-        // Fix styling of known Google snackbar/toast containers
+        // 1. Hide broken Google toast overlays
         var style = document.createElement('style');
         style.textContent = `
-            /* Hide broken toast overlays that appear as black areas */
             .FbxdMb, .Mh0NNb, .YkhnNb, .XN2Ckf, [role="status"][aria-live="polite"],
             .OIaSO, .uMiyFe, .HKhOze, .bM6rCd {
                 display: none !important;
             }
+            ._gc_copy_check {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 18px;
+                height: 18px;
+                font-size: 16px;
+                line-height: 1;
+                color: inherit;
+            }
         `;
         document.head.appendChild(style);
 
-        // Fallback: MutationObserver to catch any remaining toast elements
+        // 2. On copy button click, replace SVG with checkmark, restore on mouseleave
+        document.addEventListener('click', function(e) {
+            var btn = e.target.closest('button');
+            if (!btn) return;
+
+            var label = (btn.getAttribute('aria-label') || '').toLowerCase();
+            if (label.indexOf('copy code') === -1) return;
+
+            // Save original content
+            var originalHTML = btn.innerHTML;
+
+            // Replace with checkmark
+            btn.innerHTML = '<span class="_gc_copy_check">\\u2713</span>';
+
+            // Restore on mouseleave
+            var restored = false;
+            function restore() {
+                if (restored) return;
+                restored = true;
+                btn.innerHTML = originalHTML;
+                btn.removeEventListener('mouseleave', restore);
+            }
+            btn.addEventListener('mouseleave', restore);
+
+            // Fallback: restore after 3s even if mouseleave didn't fire
+            setTimeout(restore, 1000);
+        }, true);
+
+        // 3. MutationObserver to hide remaining broken toast elements
         var observer = new MutationObserver(function(mutations) {
             mutations.forEach(function(mutation) {
                 mutation.addedNodes.forEach(function(node) {
                     if (node.nodeType !== Node.ELEMENT_NODE) return;
                     var el = node;
                     var cs = window.getComputedStyle(el);
-                    // Detect toast-like elements: fixed/absolute position, dark background, at bottom
                     if ((cs.position === 'fixed' || cs.position === 'absolute') &&
                         (cs.backgroundColor === 'rgb(0, 0, 0)' ||
                          cs.backgroundColor === 'rgba(0, 0, 0, 1)' ||
                          cs.backgroundColor === 'rgb(32, 33, 36)' ||
                          cs.backgroundColor === 'rgb(50, 50, 50)') &&
                         el.offsetHeight < 100) {
-                        // Check if it appeared near the bottom of the viewport
                         var rect = el.getBoundingClientRect();
                         if (rect.bottom > window.innerHeight * 0.7 && rect.height < 80) {
                             el.style.display = 'none';
                         }
                     }
-                    // Also check children of the added node
                     var children = el.querySelectorAll ?
                         el.querySelectorAll('[role="status"], [aria-live]') : [];
                     children.forEach(function(child) {
