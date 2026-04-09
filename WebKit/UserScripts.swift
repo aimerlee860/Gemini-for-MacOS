@@ -18,6 +18,7 @@ enum UserScripts {
         var scripts: [WKUserScript] = [
             createIMEFixScript(),
             createTooltipFixScript(),
+            createInputFocusAssistScript(),
             createCursorFixScript(),
             createCopyToastFixScript()
         ]
@@ -57,6 +58,17 @@ enum UserScripts {
     private static func createTooltipFixScript() -> WKUserScript {
         WKUserScript(
             source: tooltipFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that helps AI Mode's animated input plate receive focus reliably.
+    /// Google inserts click-catcher layers and full-screen overlays during transitions;
+    /// on WebKit this can leave the textarea unfocused after the first click.
+    private static func createInputFocusAssistScript() -> WKUserScript {
+        WKUserScript(
+            source: inputFocusAssistSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -205,6 +217,91 @@ enum UserScripts {
     })();
     """
 
+    /// JavaScript to keep AI Mode's textarea focusable during input plate transitions.
+    /// - Disables pointer interception on the full-screen transition veil (.umNuof)
+    /// - When the user clicks the input plate or its proxy layer (.jUiaTd), explicitly focuses the textarea
+    /// - Retries briefly because Gemini mutates classes/DOM during the expand animation
+    private static let inputFocusAssistSource = """
+    (function() {
+        'use strict';
+
+        var style = document.createElement('style');
+        style.textContent = `
+            .umNuof {
+                pointer-events: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+
+        function isTextarea(el) {
+            return !!(el && el.classList && el.classList.contains('ITIRGe'));
+        }
+
+        function isFocusableTextarea(el) {
+            return isTextarea(el) && !el.disabled && !el.hidden && el.offsetParent !== null;
+        }
+
+        function getTextareaFrom(node) {
+            if (!node || !node.closest) return null;
+
+            var container = node.closest('.AgWCw, .jUiaTd, .Txyg0d');
+            if (!container) return null;
+
+            return container.querySelector('textarea.ITIRGe');
+        }
+
+        function focusTextarea(textarea) {
+            if (!isFocusableTextarea(textarea)) return false;
+
+            try {
+                textarea.focus({ preventScroll: true });
+            } catch (e) {
+                textarea.focus();
+            }
+
+            if (typeof textarea.selectionStart === 'number' &&
+                typeof textarea.selectionEnd === 'number' &&
+                textarea.selectionStart === 0 &&
+                textarea.selectionEnd === 0 &&
+                textarea.value.length > 0) {
+                var end = textarea.value.length;
+                textarea.setSelectionRange(end, end);
+            }
+
+            return document.activeElement === textarea;
+        }
+
+        function scheduleFocus(textarea) {
+            if (!textarea) return;
+            focusTextarea(textarea);
+
+            requestAnimationFrame(function() {
+                focusTextarea(textarea);
+            });
+
+            setTimeout(function() {
+                focusTextarea(textarea);
+            }, 80);
+
+            setTimeout(function() {
+                focusTextarea(textarea);
+            }, 220);
+        }
+
+        document.addEventListener('mousedown', function(e) {
+            var textarea = getTextareaFrom(e.target);
+            if (!textarea || isTextarea(e.target)) return;
+            scheduleFocus(textarea);
+        }, true);
+
+        document.addEventListener('click', function(e) {
+            var textarea = getTextareaFrom(e.target);
+            if (!textarea || isTextarea(e.target)) return;
+            scheduleFocus(textarea);
+        }, true);
+    })();
+    """
+
     /// JavaScript to render a custom blue caret for the textarea.
     /// Hides the native thin caret and Google's broken custom caret,
     /// draws our own 2px blue bar that tracks cursor position.
@@ -216,6 +313,7 @@ enum UserScripts {
         var lastFocused = null;
         var rafPending = false;
         var colorTimer = null;
+        var sizeObserver = null;
 
         function ensureCaret() {
             if (caretEl) return;
@@ -244,6 +342,7 @@ enum UserScripts {
         // 暴露清理函数，供 native 端在 cleanup 时调用
         window._geminiCursorCleanup = function() {
             if (colorTimer) { clearInterval(colorTimer); colorTimer = null; }
+            if (sizeObserver) { sizeObserver.disconnect(); sizeObserver = null; }
             if (caretEl) { caretEl.remove(); caretEl = null; }
             lastFocused = null;
         };
@@ -294,9 +393,15 @@ enum UserScripts {
             if (!lastFocused || !caretEl) return;
             var rect = lastFocused.getBoundingClientRect();
             var c = measureCursor(lastFocused);
-            caretEl.style.left = (rect.left + c.x) + 'px';
-            caretEl.style.top = (rect.top + c.y) + 'px';
-            caretEl.style.height = c.h + 'px';
+
+            var maxX = Math.max(0, rect.width - 2);
+            var maxY = Math.max(0, rect.height - c.h);
+            var left = rect.left + Math.max(0, Math.min(c.x, maxX));
+            var top = rect.top + Math.max(0, Math.min(c.y, maxY));
+
+            caretEl.style.left = left + 'px';
+            caretEl.style.top = top + 'px';
+            caretEl.style.height = Math.min(c.h, Math.max(0, rect.height)) + 'px';
             caretEl.style.display = 'block';
         }
 
@@ -311,13 +416,29 @@ enum UserScripts {
 
         function hideCaret() {
             if (caretEl) caretEl.style.display = 'none';
+            if (sizeObserver) { sizeObserver.disconnect(); sizeObserver = null; }
             lastFocused = null;
+        }
+
+        function observeTextareaSize(textarea) {
+            if (sizeObserver) {
+                sizeObserver.disconnect();
+                sizeObserver = null;
+            }
+
+            if (typeof ResizeObserver !== 'function' || !textarea) return;
+
+            sizeObserver = new ResizeObserver(function() {
+                if (lastFocused === textarea) scheduleUpdate();
+            });
+            sizeObserver.observe(textarea);
         }
 
         document.addEventListener('focus', function(e) {
             if (e.target && e.target.classList && e.target.classList.contains('ITIRGe')) {
                 lastFocused = e.target;
                 ensureCaret();
+                observeTextareaSize(e.target);
                 scheduleUpdate();
             }
         }, true);
@@ -333,6 +454,10 @@ enum UserScripts {
         document.addEventListener('scroll', function(e) {
             if (e.target === lastFocused) scheduleUpdate();
         }, true);
+
+        window.addEventListener('resize', function() {
+            if (lastFocused) scheduleUpdate();
+        });
     })();
     """
 

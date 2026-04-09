@@ -20,6 +20,7 @@ struct MainWindowView: View {
             if isLoading {
                 ProgressView()
                     .scaleEffect(1.0)
+                    .allowsHitTesting(false)
             }
         }
         .ignoresSafeArea()

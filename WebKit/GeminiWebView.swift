@@ -240,6 +240,10 @@ class WebViewContainer: NSView {
         return super.hitTest(point)
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     private func attachWebView() {
         guard webView.superview !== self else { return }
         webView.removeFromSuperview()

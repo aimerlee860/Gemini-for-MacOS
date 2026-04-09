@@ -8,6 +8,12 @@
 import WebKit
 import Combine
 
+private final class FocusFriendlyWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+}
+
 /// Handles console.log messages from JavaScript
 class ConsoleLogHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -130,7 +136,7 @@ class WebViewModel: ObservableObject {
         configuration.userContentController.add(consoleLogHandler, name: UserScripts.consoleLogHandler)
         #endif
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = FocusFriendlyWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsLinkPreview = true
         webView.customUserAgent = userAgent
