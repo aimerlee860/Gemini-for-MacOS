@@ -18,7 +18,8 @@ enum UserScripts {
         var scripts: [WKUserScript] = [
             createIMEFixScript(),
             createTooltipFixScript(),
-            createCursorFixScript()
+            createCursorFixScript(),
+            createCopyToastFixScript()
         ]
 
         if AppLanguage.current == .chinese {
@@ -67,6 +68,18 @@ enum UserScripts {
     private static func createCursorFixScript() -> WKUserScript {
         WKUserScript(
             source: cursorFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that fixes the broken copy toast notification
+    /// Gemini shows a "Copied" toast when clicking the copy button on code blocks.
+    /// In older WebKit, this toast renders as a large black area in the bottom-left corner.
+    /// This script detects and removes these broken toast elements.
+    private static func createCopyToastFixScript() -> WKUserScript {
+        WKUserScript(
+            source: copyToastFixSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -325,6 +338,61 @@ enum UserScripts {
 
     /// Language hint prefix prepended to every user message
     private static let languageHintPrefix = "请始终使用中文回复。"
+
+    /// JavaScript to fix broken copy toast notifications in WebKit.
+    /// Uses MutationObserver to detect toast-like elements that appear after copying code,
+    /// and hides them before they render as broken black areas.
+    private static let copyToastFixSource = """
+    (function() {
+        'use strict';
+
+        // Fix styling of known Google snackbar/toast containers
+        var style = document.createElement('style');
+        style.textContent = `
+            /* Hide broken toast overlays that appear as black areas */
+            .FbxdMb, .Mh0NNb, .YkhnNb, .XN2Ckf, [role="status"][aria-live="polite"],
+            .OIaSO, .uMiyFe, .HKhOze, .bM6rCd {
+                display: none !important;
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Fallback: MutationObserver to catch any remaining toast elements
+        var observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                mutation.addedNodes.forEach(function(node) {
+                    if (node.nodeType !== Node.ELEMENT_NODE) return;
+                    var el = node;
+                    var cs = window.getComputedStyle(el);
+                    // Detect toast-like elements: fixed/absolute position, dark background, at bottom
+                    if ((cs.position === 'fixed' || cs.position === 'absolute') &&
+                        (cs.backgroundColor === 'rgb(0, 0, 0)' ||
+                         cs.backgroundColor === 'rgba(0, 0, 0, 1)' ||
+                         cs.backgroundColor === 'rgb(32, 33, 36)' ||
+                         cs.backgroundColor === 'rgb(50, 50, 50)') &&
+                        el.offsetHeight < 100) {
+                        // Check if it appeared near the bottom of the viewport
+                        var rect = el.getBoundingClientRect();
+                        if (rect.bottom > window.innerHeight * 0.7 && rect.height < 80) {
+                            el.style.display = 'none';
+                        }
+                    }
+                    // Also check children of the added node
+                    var children = el.querySelectorAll ?
+                        el.querySelectorAll('[role="status"], [aria-live]') : [];
+                    children.forEach(function(child) {
+                        child.style.display = 'none';
+                    });
+                });
+            });
+        });
+
+        observer.observe(document.body || document.documentElement, {
+            childList: true,
+            subtree: true
+        });
+    })();
+    """
 
     /// JavaScript to prepend a language hint to user messages in the Gemini web interface.
     /// Intercepts the Enter key (outside IME composition) and modifies the textarea content
