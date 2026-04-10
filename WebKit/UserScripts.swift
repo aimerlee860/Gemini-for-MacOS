@@ -20,7 +20,8 @@ enum UserScripts {
             createTooltipFixScript(),
             createInputFocusAssistScript(),
             createCursorFixScript(),
-            createCopyToastFixScript()
+            createCopyToastFixScript(),
+            createUndoPasteScript()
         ]
 
         if AppLanguage.current == .chinese {
@@ -92,6 +93,17 @@ enum UserScripts {
     private static func createCopyToastFixScript() -> WKUserScript {
         WKUserScript(
             source: copyToastFixSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that adds undo-paste functionality (Cmd+Z after paste).
+    /// Saves textarea state before paste and restores it on Cmd+Z,
+    /// allowing users to remove pasted text while keeping previously typed content.
+    private static func createUndoPasteScript() -> WKUserScript {
+        WKUserScript(
+            source: undoPasteSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -312,8 +324,13 @@ enum UserScripts {
         var caretEl = null;
         var lastFocused = null;
         var rafPending = false;
+        var needsFollowUp = false;
         var colorTimer = null;
         var sizeObserver = null;
+        var styleObserver = null;
+        var pollTimer = null;
+        var cachedStyle = null;
+        var cachedFor = null;
 
         function ensureCaret() {
             if (caretEl) return;
@@ -343,30 +360,42 @@ enum UserScripts {
         window._geminiCursorCleanup = function() {
             if (colorTimer) { clearInterval(colorTimer); colorTimer = null; }
             if (sizeObserver) { sizeObserver.disconnect(); sizeObserver = null; }
+            if (styleObserver) { styleObserver.disconnect(); styleObserver = null; }
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
             if (caretEl) { caretEl.remove(); caretEl = null; }
             lastFocused = null;
         };
 
         function measureCursor(textarea) {
-            var cs = getComputedStyle(textarea);
             var mirror = document.createElement('div');
 
-            mirror.style.cssText =
-                'position:absolute;visibility:hidden;white-space:pre-wrap;' +
-                'word-wrap:break-word;overflow:hidden;' +
-                'width:' + textarea.clientWidth + 'px;' +
-                'font:' + cs.font + ';' +
-                'line-height:' + cs.lineHeight + ';' +
-                'letter-spacing:' + cs.letterSpacing + ';' +
-                'padding-top:' + cs.paddingTop + ';' +
-                'padding-right:' + cs.paddingRight + ';' +
-                'padding-bottom:' + cs.paddingBottom + ';' +
-                'padding-left:' + cs.paddingLeft + ';' +
-                'border-top:' + cs.borderTop + ';' +
-                'border-right:' + cs.borderRight + ';' +
-                'border-bottom:' + cs.borderBottom + ';' +
-                'border-left:' + cs.borderLeft + ';' +
-                'box-sizing:' + cs.boxSizing;
+            if (cachedFor !== textarea) {
+                var cs = getComputedStyle(textarea);
+                cachedStyle =
+                    'position:absolute;visibility:hidden;white-space:pre-wrap;' +
+                    'word-wrap:break-word;overflow:hidden;' +
+                    'font:' + cs.font + ';' +
+                    'line-height:' + cs.lineHeight + ';' +
+                    'letter-spacing:' + cs.letterSpacing + ';' +
+                    'padding-top:' + cs.paddingTop + ';' +
+                    'padding-right:' + cs.paddingRight + ';' +
+                    'padding-bottom:' + cs.paddingBottom + ';' +
+                    'padding-left:' + cs.paddingLeft + ';' +
+                    'border-top:' + cs.borderTop + ';' +
+                    'border-right:' + cs.borderRight + ';' +
+                    'border-bottom:' + cs.borderBottom + ';' +
+                    'border-left:' + cs.borderLeft + ';' +
+                    'box-sizing:' + cs.boxSizing + ';' +
+                    'word-break:' + cs.wordBreak + ';' +
+                    'overflow-wrap:' + cs.overflowWrap + ';' +
+                    'tab-size:' + cs.tabSize + ';' +
+                    '-webkit-line-break:' + cs.webkitLineBreak;
+                cachedFor = textarea;
+            }
+
+            mirror.style.cssText = cachedStyle + ';width:' + textarea.clientWidth + 'px';
+
+            var lineHeight = parseFloat(mirror.style.lineHeight) || 20;
 
             var pos = textarea.selectionStart;
             var text = textarea.value;
@@ -385,7 +414,7 @@ enum UserScripts {
             return {
                 x: kRect.left - mRect.left - textarea.scrollLeft,
                 y: kRect.top - mRect.top - textarea.scrollTop,
-                h: kRect.height || parseFloat(cs.lineHeight) || 20
+                h: kRect.height || lineHeight
             };
         }
 
@@ -406,17 +435,27 @@ enum UserScripts {
         }
 
         function scheduleUpdate() {
-            if (rafPending) return;
+            if (rafPending) {
+                needsFollowUp = true;
+                return;
+            }
             rafPending = true;
             requestAnimationFrame(function() {
                 rafPending = false;
                 updateCaret();
+                if (needsFollowUp) {
+                    needsFollowUp = false;
+                    scheduleUpdate();
+                }
             });
         }
 
         function hideCaret() {
             if (caretEl) caretEl.style.display = 'none';
             if (sizeObserver) { sizeObserver.disconnect(); sizeObserver = null; }
+            if (styleObserver) { styleObserver.disconnect(); styleObserver = null; }
+            cachedStyle = null;
+            cachedFor = null;
             lastFocused = null;
         }
 
@@ -425,13 +464,24 @@ enum UserScripts {
                 sizeObserver.disconnect();
                 sizeObserver = null;
             }
+            if (styleObserver) {
+                styleObserver.disconnect();
+                styleObserver = null;
+            }
 
-            if (typeof ResizeObserver !== 'function' || !textarea) return;
+            if (!textarea) return;
 
-            sizeObserver = new ResizeObserver(function() {
+            if (typeof ResizeObserver === 'function') {
+                sizeObserver = new ResizeObserver(function() {
+                    if (lastFocused === textarea) scheduleUpdate();
+                });
+                sizeObserver.observe(textarea);
+            }
+
+            styleObserver = new MutationObserver(function() {
                 if (lastFocused === textarea) scheduleUpdate();
             });
-            sizeObserver.observe(textarea);
+            styleObserver.observe(textarea, { attributes: true, attributeFilter: ['style', 'class'] });
         }
 
         document.addEventListener('focus', function(e) {
@@ -440,11 +490,24 @@ enum UserScripts {
                 ensureCaret();
                 observeTextareaSize(e.target);
                 scheduleUpdate();
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(function() {
+                    if (!lastFocused || !caretEl || caretEl.style.display === 'none') return;
+                    var r = lastFocused.getBoundingClientRect();
+                    var cl = parseFloat(caretEl.style.left) || 0;
+                    var ct = parseFloat(caretEl.style.top) || 0;
+                    if (cl < r.left || cl > r.right || ct < r.top || ct > r.bottom) {
+                        scheduleUpdate();
+                    }
+                }, 200);
             }
         }, true);
 
         document.addEventListener('blur', function(e) {
-            if (e.target === lastFocused) hideCaret();
+            if (e.target === lastFocused) {
+                hideCaret();
+                if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            }
         }, true);
 
         document.addEventListener('selectionchange', function() {
@@ -452,6 +515,18 @@ enum UserScripts {
         });
 
         document.addEventListener('scroll', function(e) {
+            if (e.target === lastFocused) scheduleUpdate();
+        }, true);
+
+        document.addEventListener('input', function(e) {
+            if (e.target === lastFocused) {
+                scheduleUpdate();
+                setTimeout(function() { scheduleUpdate(); }, 100);
+                setTimeout(function() { scheduleUpdate(); }, 400);
+            }
+        }, true);
+
+        document.addEventListener('transitionend', function(e) {
             if (e.target === lastFocused) scheduleUpdate();
         }, true);
 
@@ -605,6 +680,56 @@ enum UserScripts {
                     prependLanguageHint(captured);
                 }
             }, 10);
+        }, true);
+    })();
+    """
+
+    /// JavaScript to add undo-paste functionality.
+    /// Intercepts paste via `beforeinput`, saves textarea state,
+    /// and restores it on Cmd+Z. Invalidates if user types after paste.
+    private static let undoPasteSource = """
+    (function() {
+        'use strict';
+
+        var savedPaste = null;
+
+        document.addEventListener('beforeinput', function(e) {
+            if (e.inputType !== 'insertFromPaste') return;
+            if (!e.target.classList || !e.target.classList.contains('ITIRGe')) return;
+
+            savedPaste = {
+                textarea: e.target,
+                value: e.target.value,
+                selectionStart: e.target.selectionStart,
+                selectionEnd: e.target.selectionEnd
+            };
+        }, true);
+
+        document.addEventListener('input', function(e) {
+            if (savedPaste && savedPaste.textarea === e.target &&
+                e.inputType !== 'insertFromPaste') {
+                savedPaste = null;
+            }
+        }, true);
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key !== 'z' || !e.metaKey || e.shiftKey || e.ctrlKey || e.altKey) return;
+            if (!savedPaste) return;
+            if (e.target !== savedPaste.textarea) return;
+
+            e.preventDefault();
+            e.stopImmediatePropagation();
+
+            var textarea = e.target;
+            var nativeSet = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            ).set;
+            nativeSet.call(textarea, savedPaste.value);
+            textarea.setSelectionRange(savedPaste.selectionStart, savedPaste.selectionEnd);
+
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+            savedPaste = null;
         }, true);
     })();
     """
