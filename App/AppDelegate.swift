@@ -48,14 +48,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let dockMenu = NSMenu()
 
         // List all windows with their titles first
-        for controller in windowControllers {
+        // Use window index instead of window reference to avoid retaining released windows
+        for (index, controller) in windowControllers.enumerated() {
             let title = controller.window.title
             let item = dockMenu.addItem(
                 withTitle: title,
                 action: #selector(selectWindow(_:)),
                 keyEquivalent: ""
             )
-            item.representedObject = controller.window
+            // Store index as representedObject instead of window reference
+            item.tag = index
         }
 
         // New Window option at the bottom
@@ -68,7 +70,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectWindow(_ sender: NSMenuItem) {
-        guard let window = sender.representedObject as? NSWindow else { return }
+        // Find window by index stored in tag
+        let index = sender.tag
+        guard index >= 0 && index < windowControllers.count else { return }
+        let window = windowControllers[index].window
         window.deminiaturize(nil)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -228,10 +233,20 @@ extension AppDelegate: NSWindowDelegate {
         guard let window = notification.object as? NSWindow else { return }
         if window === settingsWindow {
             settingsWindow = nil
-        } else if windowControllers.contains(where: { $0.window === window }) {
-            // Gemini window closed via window button, schedule cleanup
-            DispatchQueue.main.async { [weak self] in
-                self?.closeWindow(window)
+        } else {
+            // Find controller immediately before window is released
+            guard let index = windowControllers.firstIndex(where: { $0.window === window }) else { return }
+            let controller = windowControllers[index]
+            // Schedule cleanup using weak reference to controller
+            DispatchQueue.main.async { [weak self, weak controller] in
+                guard let self = self, let controller = controller else { return }
+                // Verify controller is still in our list
+                guard let currentIndex = self.windowControllers.firstIndex(where: { $0 === controller }) else { return }
+                controller.cleanup()
+                self.windowControllers.remove(at: currentIndex)
+                if self.windowControllers.isEmpty {
+                    NSApp.terminate(nil)
+                }
             }
         }
     }

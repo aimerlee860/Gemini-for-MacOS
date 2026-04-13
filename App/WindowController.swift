@@ -37,6 +37,10 @@ class WindowController {
             defer: false
         )
 
+        // Prevent AppKit from auto-releasing window when closed
+        // WindowController manages window lifetime instead
+        window.isReleasedWhenClosed = false
+
         // Set unique title for this window
         window.title = windowNumber > 1 ? "Gemini \(windowNumber)" : "Gemini"
         window.backgroundColor = .white
@@ -100,6 +104,7 @@ class WindowController {
 
     func cleanup() {
         webViewModel.cleanup()
+        window.close()
     }
 
     func makeKey() {
