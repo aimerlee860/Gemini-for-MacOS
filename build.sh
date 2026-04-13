@@ -13,6 +13,7 @@ mkdir -p "$BUILD_DIR"
 # Collect all Swift source files (main.swift LAST)
 SOURCES=(
     "$PROJECT_DIR/App/AppDelegate.swift"
+    "$PROJECT_DIR/App/WindowController.swift"
     "$PROJECT_DIR/Coordinators/AppCoordinator.swift"
     "$PROJECT_DIR/Utils/UserDefaultsKeys.swift"
     "$PROJECT_DIR/Views/MainWindowView.swift"

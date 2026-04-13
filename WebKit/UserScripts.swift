@@ -13,6 +13,9 @@ enum UserScripts {
     /// Message handler name for console log bridging
     static let consoleLogHandler = "consoleLog"
 
+    /// Message handler name for title sync
+    static let titleUpdateHandler = "titleUpdate"
+
     /// Creates all user scripts to be injected into the WebView
     static func createAllScripts() -> [WKUserScript] {
         var scripts: [WKUserScript] = [
@@ -21,7 +24,8 @@ enum UserScripts {
             createInputFocusAssistScript(),
             createCursorFixScript(),
             createCopyToastFixScript(),
-            createUndoPasteScript()
+            createUndoPasteScript(),
+            createTitleSyncScript()
         ]
 
         if AppLanguage.current == .chinese {
@@ -114,6 +118,16 @@ enum UserScripts {
     private static func createLanguageHintScript() -> WKUserScript {
         WKUserScript(
             source: languageHintSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+    }
+
+    /// Creates a script that monitors document title changes and sends updates to native code
+    /// Used for showing conversation titles in Dock and window list
+    private static func createTitleSyncScript() -> WKUserScript {
+        WKUserScript(
+            source: titleSyncSource,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         )
@@ -773,4 +787,80 @@ enum UserScripts {
     })();
     """
 
+    /// JavaScript to sync document title to native code for Dock/window list display
+    private static let titleSyncSource = """
+    (function() {
+        'use strict';
+
+        var MAX_TITLE_LENGTH = 10;
+
+        function cleanTitle(rawTitle) {
+            // Remove common suffixes
+            var suffixes = [' - Google Search', ' - Google 搜索', ' - Google'];
+            var cleaned = rawTitle;
+            for (var i = 0; i < suffixes.length; i++) {
+                if (cleaned.endsWith(suffixes[i])) {
+                    cleaned = cleaned.slice(0, cleaned.length - suffixes[i].length);
+                }
+            }
+            // Trim
+            cleaned = cleaned.trim();
+            // Truncate if too long
+            if (cleaned.length > MAX_TITLE_LENGTH) {
+                cleaned = cleaned.slice(0, MAX_TITLE_LENGTH) + '...';
+            }
+            // Fallback to 'Gemini' if empty
+            return cleaned || 'Gemini';
+        }
+
+        function sendTitle() {
+            var rawTitle = document.title || 'Gemini';
+            var title = cleanTitle(rawTitle);
+            try {
+                window.webkit.messageHandlers.\(titleUpdateHandler).postMessage(title);
+            } catch (e) {}
+        }
+
+        // Initial send
+        if (document.readyState === 'complete') {
+            sendTitle();
+        } else {
+            document.addEventListener('load', sendTitle);
+        }
+
+        // Poll for title changes (handles SPA navigation and history conversations)
+        var lastTitle = document.title;
+        setInterval(function() {
+            var currentTitle = document.title;
+            if (currentTitle !== lastTitle) {
+                lastTitle = currentTitle;
+                sendTitle();
+            }
+        }, 500);
+
+        // Also observe title element changes
+        var titleEl = document.querySelector('title');
+        if (titleEl) {
+            var observer = new MutationObserver(sendTitle);
+            observer.observe(titleEl, { childList: true, characterData: true, subtree: true });
+        }
+
+        // Observe head for title element insertion
+        var head = document.head || document.querySelector('head');
+        if (head) {
+            var headObserver = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    mutation.addedNodes.forEach(function(node) {
+                        if (node.nodeName === 'TITLE') {
+                            var titleObserver = new MutationObserver(sendTitle);
+                            titleObserver.observe(node, { childList: true, characterData: true, subtree: true });
+                            sendTitle();
+                        }
+                    });
+                });
+            });
+            headObserver.observe(head, { childList: true });
+        }
+    })();
+    """
 }

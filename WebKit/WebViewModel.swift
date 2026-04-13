@@ -23,6 +23,25 @@ class ConsoleLogHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Handles title updates from JavaScript
+class TitleHandler: NSObject, WKScriptMessageHandler {
+    weak var webViewModel: WebViewModel?
+
+    override init() {
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let title = message.body as? String,
+              let webViewModel = webViewModel else { return }
+        NotificationCenter.default.post(
+            name: .windowTitleDidChange,
+            object: webViewModel,
+            userInfo: ["title": title]
+        )
+    }
+}
+
 /// Observable wrapper around WKWebView with Gemini-specific functionality
 class WebViewModel: ObservableObject {
 
@@ -48,12 +67,16 @@ class WebViewModel: ObservableObject {
     private var urlObserver: NSKeyValueObservation?
     private var loadingObserver: NSKeyValueObservation?
     private let consoleLogHandler = ConsoleLogHandler()
+    private var titleHandler: TitleHandler?
     private var isCleanedUp = false
 
     // MARK: - Initialization
 
     init() {
-        self.wkWebView = Self.createWebView(consoleLogHandler: consoleLogHandler)
+        let handler = TitleHandler()
+        self.titleHandler = handler
+        self.wkWebView = Self.createWebView(consoleLogHandler: consoleLogHandler, titleHandler: handler)
+        handler.webViewModel = self
         setupObservers()
         loadHome()
     }
@@ -120,7 +143,7 @@ class WebViewModel: ObservableObject {
 
     // MARK: - Private Setup
 
-    private static func createWebView(consoleLogHandler: ConsoleLogHandler) -> WKWebView {
+    private static func createWebView(consoleLogHandler: ConsoleLogHandler, titleHandler: TitleHandler) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -135,6 +158,9 @@ class WebViewModel: ObservableObject {
         #if DEBUG
         configuration.userContentController.add(consoleLogHandler, name: UserScripts.consoleLogHandler)
         #endif
+
+        // Register title update handler
+        configuration.userContentController.add(titleHandler, name: UserScripts.titleUpdateHandler)
 
         let webView = FocusFriendlyWebView(frame: .zero, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
@@ -202,6 +228,10 @@ class WebViewModel: ObservableObject {
         #if DEBUG
         wkWebView.configuration.userContentController.removeScriptMessageHandler(forName: UserScripts.consoleLogHandler)
         #endif
+
+        // 移除 title handler
+        wkWebView.configuration.userContentController.removeScriptMessageHandler(forName: UserScripts.titleUpdateHandler)
+        titleHandler = nil
 
         // 清理 KVO observers — 每步独立执行，避免中途异常跳过后续步骤
         backObserver?.invalidate(); backObserver = nil

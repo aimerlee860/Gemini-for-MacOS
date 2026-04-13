@@ -7,8 +7,7 @@ import AppKit
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    var coordinator = AppCoordinator()
-    var mainWindow: NSWindow?
+    var windowControllers: [WindowController] = []
     var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,32 +15,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupMenu()
 
-        // Main window
-        let mainWindowView = MainWindowView(coordinator: coordinator)
-        let hostingView = NSHostingView(rootView: mainWindowView)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = AppCoordinator.Constants.mainWindowTitle
-        window.backgroundColor = .white
-        window.titlebarAppearsTransparent = true
-        window.styleMask.insert(.fullSizeContentView)
-        window.titleVisibility = .hidden
-        if #available(macOS 11.0, *) {
-            window.titlebarSeparatorStyle = .none
-        }
-        window.contentView = hostingView
-        window.minSize = NSSize(width: 1280, height: 800)
-        window.delegate = self
-        window.center()
-        window.setFrameAutosaveName("MainWindow")
-        NSLog("[GeminiDesktop] Window created, frame: \(window.frame)")
-        window.makeKeyAndOrderFront(nil)
-        NSLog("[GeminiDesktop] Window visible: \(window.isVisible)")
-        mainWindow = window
+        // Create first window
+        createNewWindow()
 
         // Observe open main window notification
         NotificationCenter.default.addObserver(
@@ -54,8 +29,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        NotificationCenter.default.post(name: .openMainWindow, object: nil)
+        if windowControllers.isEmpty {
+            createNewWindow()
+        } else {
+            // Restore all minimized windows instead of just one
+            for controller in windowControllers {
+                controller.window.deminiaturize(nil)
+            }
+            // Activate the app
+            NSApp.activate(ignoringOtherApps: true)
+        }
         return true
+    }
+
+    // MARK: - Dock Menu
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let dockMenu = NSMenu()
+
+        // List all windows with their titles first
+        for controller in windowControllers {
+            let title = controller.window.title
+            let item = dockMenu.addItem(
+                withTitle: title,
+                action: #selector(selectWindow(_:)),
+                keyEquivalent: ""
+            )
+            item.representedObject = controller.window
+        }
+
+        // New Window option at the bottom
+        if windowControllers.count > 0 {
+            dockMenu.addItem(NSMenuItem.separator())
+        }
+        dockMenu.addItem(withTitle: "New Window", action: #selector(createNewWindow), keyEquivalent: "")
+
+        return dockMenu
+    }
+
+    @objc private func selectWindow(_ sender: NSMenuItem) {
+        guard let window = sender.representedObject as? NSWindow else { return }
+        window.deminiaturize(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     // MARK: - Menu
@@ -67,6 +83,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu(title: "Gemini")
         appMenu.addItem(withTitle: "About Gemini", action: #selector(showAboutPanel), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "New Window", action: #selector(createNewWindow), keyEquivalent: "n")
         appMenu.addItem(NSMenuItem.separator())
         // Language submenu inside Gemini menu
         let langMenuItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
@@ -83,7 +101,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         langMenuItem.submenu = langMenu
-        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(langMenuItem)
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Gemini", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -106,8 +123,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Reload page with new language URL
-        coordinator.webViewModel.loadHome()
+        // Reload all windows with new language
+        for controller in windowControllers {
+            controller.webViewModel.loadHome()
+        }
     }
 
     @objc private func showAboutPanel() {
@@ -121,13 +140,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Windows
 
     func applicationWillTerminate(_ notification: Notification) {
-        coordinator.webViewModel.cleanup()
+        for controller in windowControllers {
+            controller.cleanup()
+        }
+        windowControllers.removeAll()
         NotificationCenter.default.removeObserver(self)
     }
 
+    @objc func createNewWindow() {
+        let windowNumber = windowControllers.count + 1
+        let controller = WindowController(windowNumber: windowNumber)
+        controller.window.delegate = self
+        windowControllers.append(controller)
+        NSLog("[GeminiDesktop] Window created, total windows: \(windowControllers.count)")
+    }
+
+    private func closeWindow(_ window: NSWindow) {
+        // Find the controller for this window
+        guard let index = windowControllers.firstIndex(where: { $0.window === window }) else {
+            // Not a Gemini window, let system handle it
+            window.close()
+            return
+        }
+
+        let controller = windowControllers[index]
+        controller.cleanup()
+        windowControllers.remove(at: index)
+
+        if windowControllers.isEmpty {
+            // Last window closed, quit app
+            NSApp.terminate(nil)
+        }
+    }
+
     func openMainWindow() {
-        mainWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if windowControllers.isEmpty {
+            createNewWindow()
+        } else {
+            // Restore all minimized windows
+            for controller in windowControllers {
+                controller.window.deminiaturize(nil)
+            }
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func openSettings() {
@@ -137,6 +192,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // Use first window's coordinator for settings
+        guard let coordinator = windowControllers.first?.coordinator else { return }
         let settingsView = SettingsView(coordinator: coordinator)
         let hostingView = NSHostingView(rootView: settingsView)
         let window = NSWindow(
@@ -156,7 +213,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// MARK: - NSWindowDelegate for settings
+// MARK: - NSWindowDelegate
 
 extension AppDelegate: NSWindowDelegate {
     func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
@@ -169,16 +226,21 @@ extension AppDelegate: NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window == settingsWindow {
+        if window === settingsWindow {
             settingsWindow = nil
+        } else if windowControllers.contains(where: { $0.window === window }) {
+            // Gemini window closed via window button, schedule cleanup
+            DispatchQueue.main.async { [weak self] in
+                self?.closeWindow(window)
+            }
         }
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if sender == mainWindow {
-            NSApp.terminate(nil)
-            return false
+        if sender === settingsWindow {
+            return true
         }
+        // Allow Gemini windows to close, cleanup will be handled in windowWillClose
         return true
     }
 }

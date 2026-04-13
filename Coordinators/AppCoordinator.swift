@@ -11,16 +11,19 @@ import WebKit
 
 extension Notification.Name {
     static let openMainWindow = Notification.Name("openMainWindow")
+    static let windowTitleDidChange = Notification.Name("windowTitleDidChange")
 }
 
 class AppCoordinator: ObservableObject {
 
-    @Published var webViewModel = WebViewModel()
+    let webViewModel: WebViewModel
 
     var canGoBack: Bool { webViewModel.canGoBack }
     var canGoForward: Bool { webViewModel.canGoForward }
 
-    init() {}
+    init(webViewModel: WebViewModel = WebViewModel()) {
+        self.webViewModel = webViewModel
+    }
 
     // MARK: - Navigation
 
