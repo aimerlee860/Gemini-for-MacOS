@@ -566,13 +566,52 @@ enum UserScripts {
         `;
         document.head.appendChild(style);
 
-        // 2. On copy button click, replace SVG with checkmark, restore on mouseleave
+        // 2. On copy button click, extract code and copy to clipboard
         document.addEventListener('click', function(e) {
             var btn = e.target.closest('button');
             if (!btn) return;
 
             var label = (btn.getAttribute('aria-label') || '').toLowerCase();
             if (label.indexOf('copy code') === -1) return;
+
+            // Find the code block - walk up to find code-container, then find code/pre element
+            var codeText = '';
+            var container = btn.closest('[class*="code"], [class*="code-block"], pre, code');
+
+            // Try multiple selectors to find the code content
+            var codeEl = null;
+            if (container) {
+                codeEl = container.querySelector('code') || container.querySelector('pre') || container;
+            }
+
+            // If not found, try finding pre/code in siblings or parent's children
+            if (!codeEl || !codeEl.textContent) {
+                var parent = btn.parentElement;
+                while (parent && !codeEl) {
+                    codeEl = parent.querySelector('code') || parent.querySelector('pre');
+                    if (codeEl && codeEl.textContent) break;
+                    parent = parent.parentElement;
+                }
+            }
+
+            if (codeEl) {
+                codeText = codeEl.textContent || '';
+            }
+
+            // Copy to clipboard
+            if (codeText) {
+                navigator.clipboard.writeText(codeText).catch(function() {
+                    // Fallback for older browsers
+                    var ta = document.createElement('textarea');
+                    ta.value = codeText;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                });
+            }
 
             // Save original content
             var originalHTML = btn.innerHTML;
