@@ -7,6 +7,7 @@
 
 import WebKit
 import Combine
+import Network
 
 private final class FocusFriendlyWebView: WKWebView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -59,6 +60,14 @@ class WebViewModel: ObservableObject {
     @Published private(set) var canGoForward: Bool = false
     @Published private(set) var isAtHome: Bool = true
     @Published private(set) var isLoading: Bool = true
+    @Published private(set) var networkError: (message: String, isRetryable: Bool)?
+
+    // MARK: - Private Properties (Error Recovery)
+
+    private var retryCount: Int = 0
+    private var retryTimer: Timer?
+    private static let maxRetryCount = 3
+    private static let retryDelay: TimeInterval = 2.0
 
     // MARK: - Private Properties
 
@@ -70,6 +79,12 @@ class WebViewModel: ObservableObject {
     private var titleHandler: TitleHandler?
     private var isCleanedUp = false
 
+    // MARK: - Private Properties (Network Monitoring)
+
+    private let pathMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "com.gemini.network-monitor")
+    private var lastPathInterfaces: Set<String> = []
+
     // MARK: - Initialization
 
     init() {
@@ -78,6 +93,7 @@ class WebViewModel: ObservableObject {
         self.wkWebView = Self.createWebView(consoleLogHandler: consoleLogHandler, titleHandler: handler)
         handler.webViewModel = self
         setupObservers()
+        setupNetworkMonitor()
         loadHome()
     }
 
@@ -117,7 +133,57 @@ class WebViewModel: ObservableObject {
     }
 
     func reload() {
+        retryCount = 0
+        retryTimer?.invalidate()
+        retryTimer = nil
+        networkError = nil
         wkWebView.reload()
+    }
+
+    func retryAfterError() {
+        retryCount = 0
+        retryTimer?.invalidate()
+        retryTimer = nil
+        networkError = nil
+        clearWebsiteData {
+            self.wkWebView.reload()
+        }
+    }
+
+    func handleNetworkError(_ error: Error, isRetryable: Bool) {
+        let message: String
+        let nsError = error as NSError
+
+        switch nsError.code {
+        case NSURLErrorTimedOut:
+            message = "连接超时，请检查网络"
+        case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
+            message = "网络连接已断开"
+        case NSURLErrorDNSLookupFailed, NSURLErrorCannotFindHost:
+            message = "DNS 解析失败，请检查网络或 VPN 设置"
+        case NSURLErrorCannotConnectToHost:
+            message = "无法连接到服务器"
+        default:
+            message = "网络错误：\(error.localizedDescription)"
+        }
+
+        if isRetryable && retryCount < Self.maxRetryCount {
+            retryCount += 1
+            retryTimer?.invalidate()
+            retryTimer = Timer.scheduledTimer(withTimeInterval: Self.retryDelay, repeats: false) { [weak self] _ in
+                guard let self = self else { return }
+                self.clearWebsiteData {
+                    self.wkWebView.reload()
+                }
+            }
+        } else {
+            networkError = (message: message, isRetryable: isRetryable)
+        }
+    }
+
+    private func clearWebsiteData(completion: @escaping () -> Void) {
+        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+        WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: Date().addingTimeInterval(-300), completionHandler: completion)
     }
 
     func openNewChat() {
@@ -185,7 +251,12 @@ class WebViewModel: ObservableObject {
         }
 
         loadingObserver = wkWebView.observe(\.isLoading, options: [.new, .initial]) { [weak self] webView, _ in
-            self?.isLoading = webView.isLoading
+            guard let self = self else { return }
+            self.isLoading = webView.isLoading
+            if !webView.isLoading && self.networkError != nil {
+                self.networkError = nil
+                self.retryCount = 0
+            }
         }
 
         urlObserver = wkWebView.observe(\.url, options: .new) { [weak self] webView, _ in
@@ -205,11 +276,64 @@ class WebViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Network Monitoring
+
+    private func setupNetworkMonitor() {
+        let initialPath = pathMonitor.currentPath
+        lastPathInterfaces = currentInterfaces(from: initialPath)
+
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self, !self.isCleanedUp else { return }
+
+            let newInterfaces = self.currentInterfaces(from: path)
+
+            // 检测路由变化：接口集合发生变化（VPN 开关、网卡切换等）
+            let routeChanged = newInterfaces != self.lastPathInterfaces
+
+            // 检测网络恢复：从断开变为可用
+            let becameReachable = path.status == .satisfied
+
+            self.lastPathInterfaces = newInterfaces
+
+            if routeChanged && becameReachable {
+                DispatchQueue.main.async {
+                    self.handleNetworkPathChange()
+                }
+            }
+        }
+        pathMonitor.start(queue: monitorQueue)
+    }
+
+    private func currentInterfaces(from path: NWPath) -> Set<String> {
+        var interfaces: Set<String> = []
+        if path.usesInterfaceType(.wifi) { interfaces.insert("wifi") }
+        if path.usesInterfaceType(.wiredEthernet) { interfaces.insert("ethernet") }
+        if path.usesInterfaceType(.cellular) { interfaces.insert("cellular") }
+        if path.usesInterfaceType(.other) { interfaces.insert("other") }
+        // TUN/VPN 虚拟网卡通常归为 other 或 loopback
+        if path.usesInterfaceType(.loopback) { interfaces.insert("loopback") }
+        return interfaces
+    }
+
+    private func handleNetworkPathChange() {
+        guard !wkWebView.isLoading else { return }
+        retryCount = 0
+        networkError = nil
+        clearWebsiteData { [weak self] in
+            self?.wkWebView.reload()
+        }
+    }
+
     // MARK: - Cleanup
 
     func cleanup() {
         guard !isCleanedUp else { return }
         isCleanedUp = true
+
+        retryTimer?.invalidate()
+        retryTimer = nil
+
+        pathMonitor.cancel()
 
         // 通知 JS 清理定时器和 DOM 元素
         wkWebView.evaluateJavaScript("if(window._geminiCursorCleanup)window._geminiCursorCleanup();", completionHandler: nil)

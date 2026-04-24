@@ -10,6 +10,7 @@ import WebKit
 
 struct GeminiWebView: NSViewRepresentable {
     let webView: WKWebView
+    @ObservedObject var webViewModel: WebViewModel
 
     func makeNSView(context: Context) -> WebViewContainer {
         let container = WebViewContainer(webView: webView, coordinator: context.coordinator)
@@ -19,11 +20,42 @@ struct GeminiWebView: NSViewRepresentable {
     func updateNSView(_ container: WebViewContainer, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(webViewModel: webViewModel)
     }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         private var downloadDestinations: [ObjectIdentifier: URL] = [:]
+        weak var webViewModel: WebViewModel?
+
+        init(webViewModel: WebViewModel) {
+            self.webViewModel = webViewModel
+            super.init()
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            handleNavigationError(error)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            handleNavigationError(error)
+        }
+
+        private func handleNavigationError(_ error: Error) {
+            let nsError = error as NSError
+            guard nsError.domain == NSURLErrorDomain, nsError.code != NSURLErrorCancelled else { return }
+
+            let isRetryable: Bool = [
+                NSURLErrorTimedOut,
+                NSURLErrorCannotConnectToHost,
+                NSURLErrorNetworkConnectionLost,
+                NSURLErrorNotConnectedToInternet,
+                NSURLErrorDNSLookupFailed,
+                NSURLErrorCannotFindHost,
+                NSURLErrorResourceUnavailable,
+            ].contains(nsError.code)
+
+            webViewModel?.handleNetworkError(error, isRetryable: isRetryable)
+        }
 
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
