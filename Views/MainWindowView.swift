@@ -31,12 +31,10 @@ struct MainWindowView: View {
                     Text(error.message)
                         .font(.headline)
                         .multilineTextAlignment(.center)
-                    if error.isRetryable {
-                        Button("重试") {
-                            coordinator.webViewModel.retryAfterError()
-                        }
-                        .keyboardShortcut(.defaultAction)
+                    Button(error.isRetryable ? "重试" : "刷新页面") {
+                        coordinator.webViewModel.retryAfterError()
                     }
+                    .keyboardShortcut(.defaultAction)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(nsColor: .windowBackgroundColor))

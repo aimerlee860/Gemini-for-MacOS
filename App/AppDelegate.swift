@@ -112,7 +112,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
+        // View menu
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        viewMenu.addItem(withTitle: "Reload Page", action: #selector(reloadPage), keyEquivalent: "r")
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
+
         NSApplication.shared.mainMenu = mainMenu
+    }
+
+    @objc private func reloadPage() {
+        guard let keyWindow = NSApp.keyWindow,
+              let controller = windowControllers.first(where: { $0.window === keyWindow }) else { return }
+        controller.webViewModel.retryAfterError()
     }
 
     @objc private func switchLanguage(_ sender: NSMenuItem) {
