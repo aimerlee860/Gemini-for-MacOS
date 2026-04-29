@@ -166,7 +166,7 @@ enum UserScripts {
         let imeActive = false;
         let imeEverUsed = false;
         let compositionEndTime = 0;
-        const BUFFER_TIME = 300;
+        const BUFFER_TIME = 50;
 
         function isInIMEWindow() {
             return imeActive || (Date.now() - compositionEndTime < BUFFER_TIME);
