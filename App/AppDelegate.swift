@@ -108,16 +108,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         langMenuItem.submenu = langMenu
         appMenu.addItem(langMenuItem)
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "Reload Page", action: #selector(reloadPage), keyEquivalent: "r")
+        appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Gemini", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
-
-        // View menu
-        let viewMenuItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "View")
-        viewMenu.addItem(withTitle: "Reload Page", action: #selector(reloadPage), keyEquivalent: "r")
-        viewMenuItem.submenu = viewMenu
-        mainMenu.addItem(viewMenuItem)
 
         NSApplication.shared.mainMenu = mainMenu
     }

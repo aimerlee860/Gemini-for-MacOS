@@ -27,6 +27,7 @@ class ConsoleLogHandler: NSObject, WKScriptMessageHandler {
 /// Handles title updates from JavaScript
 class TitleHandler: NSObject, WKScriptMessageHandler {
     weak var webViewModel: WebViewModel?
+    private var lastTitle: String = ""
 
     override init() {
         super.init()
@@ -34,7 +35,9 @@ class TitleHandler: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let title = message.body as? String,
+              title != lastTitle,
               let webViewModel = webViewModel else { return }
+        lastTitle = title
         NotificationCenter.default.post(
             name: .windowTitleDidChange,
             object: webViewModel,
@@ -81,9 +84,15 @@ class WebViewModel: ObservableObject {
 
     // MARK: - Private Properties (Network Monitoring)
 
+    private enum NetInterface {
+        case wifi, wiredEthernet, cellular, other, loopback
+    }
+
     private let pathMonitor = NWPathMonitor()
     private let monitorQueue = DispatchQueue(label: "com.gemini.network-monitor")
-    private var lastPathInterfaces: Set<String> = []
+    private var lastPathInterfaces: Set<NetInterface> = []
+    private var pathChangeWorkItem: DispatchWorkItem?
+    private static let pathChangeDebounce: TimeInterval = 1.0
 
     // MARK: - Initialization
 
@@ -124,7 +133,6 @@ class WebViewModel: ObservableObject {
     }
 
     func goBack() {
-        isAtHome = false
         wkWebView.goBack()
     }
 
@@ -132,22 +140,21 @@ class WebViewModel: ObservableObject {
         wkWebView.goForward()
     }
 
-    func reload() {
+    private func resetRetryState() {
         retryCount = 0
         retryTimer?.invalidate()
         retryTimer = nil
         networkError = nil
+    }
+
+    func reload() {
+        resetRetryState()
         wkWebView.reload()
     }
 
     func retryAfterError() {
-        retryCount = 0
-        retryTimer?.invalidate()
-        retryTimer = nil
-        networkError = nil
-        clearCache {
-            self.wkWebView.reload()
-        }
+        resetRetryState()
+        clearCacheAndReload()
     }
 
     func handleNetworkError(_ error: Error, isRetryable: Bool) {
@@ -170,11 +177,10 @@ class WebViewModel: ObservableObject {
         if isRetryable && retryCount < Self.maxRetryCount {
             retryCount += 1
             retryTimer?.invalidate()
+            retryTimer = nil
             retryTimer = Timer.scheduledTimer(withTimeInterval: Self.retryDelay, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                self.clearCache {
-                    self.wkWebView.reload()
-                }
+                self.clearCacheAndReload()
             }
         } else {
             networkError = (message: message, isRetryable: isRetryable)
@@ -186,7 +192,13 @@ class WebViewModel: ObservableObject {
             WKWebsiteDataTypeDiskCache,
             WKWebsiteDataTypeMemoryCache,
         ]
-        WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: Date().addingTimeInterval(-300), completionHandler: completion)
+        WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: Date().addingTimeInterval(-60), completionHandler: completion)
+    }
+
+    private func clearCacheAndReload() {
+        clearCache { [weak self] in
+            self?.wkWebView.reload()
+        }
     }
 
     func openNewChat() {
@@ -289,39 +301,42 @@ class WebViewModel: ObservableObject {
             guard let self = self, !self.isCleanedUp else { return }
 
             let newInterfaces = self.currentInterfaces(from: path)
-
-            // 检测路由变化：接口集合发生变化（VPN 开关、网卡切换等）
             let routeChanged = newInterfaces != self.lastPathInterfaces
-
-            // 检测网络恢复：从断开变为可用
             let becameReachable = path.status == .satisfied
 
             self.lastPathInterfaces = newInterfaces
 
             if routeChanged && becameReachable {
                 DispatchQueue.main.async {
-                    self.handleNetworkPathChange()
+                    self.scheduleNetworkPathChange()
                 }
             }
         }
         pathMonitor.start(queue: monitorQueue)
     }
 
-    private func currentInterfaces(from path: NWPath) -> Set<String> {
-        var interfaces: Set<String> = []
-        if path.usesInterfaceType(.wifi) { interfaces.insert("wifi") }
-        if path.usesInterfaceType(.wiredEthernet) { interfaces.insert("ethernet") }
-        if path.usesInterfaceType(.cellular) { interfaces.insert("cellular") }
-        if path.usesInterfaceType(.other) { interfaces.insert("other") }
-        // TUN/VPN 虚拟网卡通常归为 other 或 loopback
-        if path.usesInterfaceType(.loopback) { interfaces.insert("loopback") }
+    private func currentInterfaces(from path: NWPath) -> Set<NetInterface> {
+        var interfaces: Set<NetInterface> = []
+        if path.usesInterfaceType(.wifi) { interfaces.insert(.wifi) }
+        if path.usesInterfaceType(.wiredEthernet) { interfaces.insert(.wiredEthernet) }
+        if path.usesInterfaceType(.cellular) { interfaces.insert(.cellular) }
+        if path.usesInterfaceType(.other) { interfaces.insert(.other) }
+        if path.usesInterfaceType(.loopback) { interfaces.insert(.loopback) }
         return interfaces
+    }
+
+    private func scheduleNetworkPathChange() {
+        pathChangeWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.handleNetworkPathChange()
+        }
+        pathChangeWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pathChangeDebounce, execute: workItem)
     }
 
     private func handleNetworkPathChange() {
         guard !wkWebView.isLoading else { return }
-        retryCount = 0
-        networkError = nil
+        resetRetryState()
         wkWebView.reload()
     }
 
@@ -334,31 +349,34 @@ class WebViewModel: ObservableObject {
         retryTimer?.invalidate()
         retryTimer = nil
 
+        pathChangeWorkItem?.cancel()
+        pathChangeWorkItem = nil
+
         pathMonitor.cancel()
 
-        // 通知 JS 清理定时器和 DOM 元素
+        // Notify JS to clean up timers and DOM elements
         wkWebView.evaluateJavaScript("if(window._geminiCursorCleanup)window._geminiCursorCleanup();", completionHandler: nil)
 
-        // 停止所有媒体渲染管线
+        // Stop all media rendering pipelines
         wkWebView.pauseAllMediaPlayback()
-        // 停止所有加载，中断网络请求
+        // Stop loading and abort network requests
         wkWebView.stopLoading()
-        // 清空页面内容，释放 GPU/解码资源
+        // Clear page content to release GPU/decoder resources
         wkWebView.loadHTMLString("", baseURL: nil)
-        // 移除导航和 UI 代理，防止回调到已释放的对象
+        // Remove navigation and UI delegates to prevent callbacks to deallocated objects
         wkWebView.navigationDelegate = nil
         wkWebView.uiDelegate = nil
 
-        // 移除 console log handler（防止 WKUserContentController 强持有）
+        // Remove console log handler to prevent WKUserContentController strong reference
         #if DEBUG
         wkWebView.configuration.userContentController.removeScriptMessageHandler(forName: UserScripts.consoleLogHandler)
         #endif
 
-        // 移除 title handler
+        // Remove title handler
         wkWebView.configuration.userContentController.removeScriptMessageHandler(forName: UserScripts.titleUpdateHandler)
         titleHandler = nil
 
-        // 清理 KVO observers — 每步独立执行，避免中途异常跳过后续步骤
+        // Clean up KVO observers — each step runs independently to avoid skipping on exception
         backObserver?.invalidate(); backObserver = nil
         forwardObserver?.invalidate(); forwardObserver = nil
         urlObserver?.invalidate(); urlObserver = nil
