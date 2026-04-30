@@ -145,7 +145,7 @@ class WebViewModel: ObservableObject {
         retryTimer?.invalidate()
         retryTimer = nil
         networkError = nil
-        clearWebsiteData {
+        clearCache {
             self.wkWebView.reload()
         }
     }
@@ -172,7 +172,7 @@ class WebViewModel: ObservableObject {
             retryTimer?.invalidate()
             retryTimer = Timer.scheduledTimer(withTimeInterval: Self.retryDelay, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                self.clearWebsiteData {
+                self.clearCache {
                     self.wkWebView.reload()
                 }
             }
@@ -181,8 +181,11 @@ class WebViewModel: ObservableObject {
         }
     }
 
-    private func clearWebsiteData(completion: @escaping () -> Void) {
-        let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+    private func clearCache(completion: @escaping () -> Void) {
+        let dataTypes: Set<String> = [
+            WKWebsiteDataTypeDiskCache,
+            WKWebsiteDataTypeMemoryCache,
+        ]
         WKWebsiteDataStore.default().removeData(ofTypes: dataTypes, modifiedSince: Date().addingTimeInterval(-300), completionHandler: completion)
     }
 
@@ -319,9 +322,7 @@ class WebViewModel: ObservableObject {
         guard !wkWebView.isLoading else { return }
         retryCount = 0
         networkError = nil
-        clearWebsiteData { [weak self] in
-            self?.wkWebView.reload()
-        }
+        wkWebView.reload()
     }
 
     // MARK: - Cleanup
