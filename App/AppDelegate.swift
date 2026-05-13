@@ -13,6 +13,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSLog("[GeminiDesktop] applicationDidFinishLaunching called")
 
+        WebViewModel.prewarmProcess()
+        WebViewModel.warmConnections()
+
         setupMenu()
 
         // Create first window
@@ -25,6 +28,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             self?.openMainWindow()
+        }
+
+        // Refresh DNS/TLS cache when user switches back to the app
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            WebViewModel.warmConnections()
         }
     }
 

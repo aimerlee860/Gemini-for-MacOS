@@ -94,6 +94,51 @@ class WebViewModel: ObservableObject {
     private var pathChangeWorkItem: DispatchWorkItem?
     private static let pathChangeDebounce: TimeInterval = 1.0
 
+    // MARK: - Connection Pre-warming
+
+    private static let preconnectHosts = [
+        "www.google.com",
+        "gemini.google.com",
+        "accounts.google.com",
+        "apis.google.com",
+        "www.gstatic.com",
+        "fonts.gstatic.com",
+        "fonts.googleapis.com",
+    ]
+
+    private static var prewarmWebView: WKWebView?
+
+    /// Start the WebKit networking process early so it's ready when the real WebView loads
+    static func prewarmProcess() {
+        let config = WKWebViewConfiguration()
+        prewarmWebView = WKWebView(frame: .zero, configuration: config)
+        prewarmWebView?.loadHTMLString("", baseURL: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            prewarmWebView = nil
+        }
+    }
+
+    /// Resolve DNS + TLS for key hosts via NWConnection to populate system cache
+    static func warmConnections() {
+        let queue = DispatchQueue.global(qos: .utility)
+        for host in preconnectHosts {
+            let endpoint = NWEndpoint.hostPort(
+                host: NWEndpoint.Host(host),
+                port: NWEndpoint.Port(rawValue: 443)!
+            )
+            let connection = NWConnection(to: endpoint, using: .tls)
+            connection.stateUpdateHandler = { (state: NWConnection.State) in
+                switch state {
+                case .ready, .failed:
+                    connection.cancel()
+                default:
+                    break
+                }
+            }
+            connection.start(queue: queue)
+        }
+    }
+
     // MARK: - Initialization
 
     init() {
@@ -180,7 +225,7 @@ class WebViewModel: ObservableObject {
             retryTimer = nil
             retryTimer = Timer.scheduledTimer(withTimeInterval: Self.retryDelay, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
-                self.clearCacheAndReload()
+                self.wkWebView.reload()
             }
         } else {
             networkError = (message: message, isRetryable: isRetryable)

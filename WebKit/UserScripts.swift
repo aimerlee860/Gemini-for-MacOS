@@ -19,6 +19,7 @@ enum UserScripts {
     /// Creates all user scripts to be injected into the WebView
     static func createAllScripts() -> [WKUserScript] {
         var scripts: [WKUserScript] = [
+            createPreconnectScript(),
             createIMEFixScript(),
             createTooltipFixScript(),
             createInputFocusAssistScript(),
@@ -45,6 +46,16 @@ enum UserScripts {
             source: consoleLogBridgeSource,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
+        )
+    }
+
+    /// Creates a script that injects preconnect/dns-prefetch hints for resource domains,
+    /// telling the browser to proactively resolve DNS and establish connections
+    private static func createPreconnectScript() -> WKUserScript {
+        WKUserScript(
+            source: preconnectSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
         )
     }
 
@@ -151,6 +162,40 @@ enum UserScripts {
                 window.webkit.messageHandlers.\(consoleLogHandler).postMessage(message);
             } catch (e) {}
         };
+    })();
+    """
+
+    /// Injects preconnect and dns-prefetch hints for known resource domains.
+    /// preconnect: full TCP+TLS handshake for critical origins
+    /// dns-prefetch: DNS resolution only for secondary origins
+    private static let preconnectSource = """
+    (function() {
+        var preconnectHosts = [
+            'https://www.google.com',
+            'https://gemini.google.com',
+            'https://apis.google.com',
+            'https://www.gstatic.com',
+            'https://fonts.googleapis.com',
+        ];
+        var dnsPrefetchHosts = [
+            'https://fonts.gstatic.com',
+            'https://accounts.google.com',
+            'https://lh3.googleusercontent.com',
+            'https://ssl.gstatic.com',
+        ];
+        var parent = document.head || document.documentElement;
+        preconnectHosts.forEach(function(h) {
+            var link = document.createElement('link');
+            link.rel = 'preconnect';
+            link.href = h;
+            parent.appendChild(link);
+        });
+        dnsPrefetchHosts.forEach(function(h) {
+            var link = document.createElement('link');
+            link.rel = 'dns-prefetch';
+            link.href = h;
+            parent.appendChild(link);
+        });
     })();
     """
 
@@ -507,7 +552,13 @@ enum UserScripts {
                 if (pollTimer) clearInterval(pollTimer);
                 pollTimer = setInterval(function() {
                     if (!lastFocused || !caretEl || caretEl.style.display === 'none') return;
+                    if (!document.hasFocus() || document.activeElement !== lastFocused) {
+                        clearInterval(pollTimer);
+                        pollTimer = null;
+                        return;
+                    }
                     var r = lastFocused.getBoundingClientRect();
+                    if (r.width === 0 || r.height === 0) return;
                     var cl = parseFloat(caretEl.style.left) || 0;
                     var ct = parseFloat(caretEl.style.top) || 0;
                     if (cl < r.left || cl > r.right || ct < r.top || ct > r.bottom) {
@@ -525,7 +576,7 @@ enum UserScripts {
         }, true);
 
         document.addEventListener('selectionchange', function() {
-            if (lastFocused) scheduleUpdate();
+            if (lastFocused && document.activeElement === lastFocused) scheduleUpdate();
         });
 
         document.addEventListener('scroll', function(e) {
@@ -648,30 +699,56 @@ enum UserScripts {
         }, true);
 
         // 3. MutationObserver to hide remaining broken toast elements
-        var observer = new MutationObserver(function(mutations) {
-            mutations.forEach(function(mutation) {
-                mutation.addedNodes.forEach(function(node) {
-                    if (node.nodeType !== Node.ELEMENT_NODE) return;
-                    var el = node;
-                    var cs = window.getComputedStyle(el);
-                    if ((cs.position === 'fixed' || cs.position === 'absolute') &&
-                        (cs.backgroundColor === 'rgb(0, 0, 0)' ||
-                         cs.backgroundColor === 'rgba(0, 0, 0, 1)' ||
-                         cs.backgroundColor === 'rgb(32, 33, 36)' ||
-                         cs.backgroundColor === 'rgb(50, 50, 50)') &&
-                        el.offsetHeight < 100) {
-                        var rect = el.getBoundingClientRect();
-                        if (rect.bottom > window.innerHeight * 0.7 && rect.height < 80) {
-                            el.style.display = 'none';
-                        }
+        // Uses idle batching to avoid forcing layout recalculation during heavy DOM activity
+        var pendingToasts = [];
+        var toastCheckScheduled = false;
+
+        function processToasts() {
+            toastCheckScheduled = false;
+            var batch = pendingToasts;
+            pendingToasts = [];
+            batch.forEach(function(el) {
+                if (!el.isConnected) return;
+                var cs = window.getComputedStyle(el);
+                if ((cs.position === 'fixed' || cs.position === 'absolute') &&
+                    (cs.backgroundColor === 'rgb(0, 0, 0)' ||
+                     cs.backgroundColor === 'rgba(0, 0, 0, 1)' ||
+                     cs.backgroundColor === 'rgb(32, 33, 36)' ||
+                     cs.backgroundColor === 'rgb(50, 50, 50)') &&
+                    el.offsetHeight < 100) {
+                    var rect = el.getBoundingClientRect();
+                    if (rect.bottom > window.innerHeight * 0.7 && rect.height < 80) {
+                        el.style.display = 'none';
                     }
-                    var children = el.querySelectorAll ?
-                        el.querySelectorAll('[role="status"], [aria-live]') : [];
-                    children.forEach(function(child) {
-                        child.style.display = 'none';
-                    });
-                });
+                }
             });
+        }
+
+        function scheduleToastCheck() {
+            if (toastCheckScheduled) return;
+            toastCheckScheduled = true;
+            if (typeof requestIdleCallback === 'function') {
+                requestIdleCallback(processToasts, { timeout: 1000 });
+            } else {
+                setTimeout(processToasts, 300);
+            }
+        }
+
+        var observer = new MutationObserver(function(mutations) {
+            for (var i = 0; i < mutations.length; i++) {
+                var added = mutations[i].addedNodes;
+                for (var j = 0; j < added.length; j++) {
+                    var node = added[j];
+                    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+                    pendingToasts.push(node);
+                    var children = node.querySelectorAll ?
+                        node.querySelectorAll('[role="status"], [aria-live]') : [];
+                    for (var k = 0; k < children.length; k++) {
+                        children[k].style.display = 'none';
+                    }
+                }
+            }
+            if (pendingToasts.length > 0) scheduleToastCheck();
         });
 
         observer.observe(document.body || document.documentElement, {
